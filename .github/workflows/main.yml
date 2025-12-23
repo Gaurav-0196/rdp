@@ -12,7 +12,7 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-2019
-    timeout-minutes: ${{ github.event.inputs.session_time }}
+    timeout-minutes: ${{ github.event.inputs.session_time, 300}}
 
     steps:
       - name: Check Windows Version
