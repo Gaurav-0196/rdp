@@ -29,39 +29,13 @@ jobs:
           # (Optional) Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
-      - name: Disable Password Complexity and Create User
+      - name: Create RDP User
         run: |
-          Write-Host "Step 1: Disabling password complexity requirements..."
+          Write-Host "Creating RDP user..."
           
-          # Create secpol.inf file
-          $secpolContent = '[Unicode]
-Unicode=yes
-[System Access]
-MinimumPasswordAge = 0
-MaximumPasswordAge = 42
-MinimumPasswordLength = 1
-PasswordComplexity = 0
-PasswordHistorySize = 0
-LockoutBadCount = 0
-RequireLogonToChangePassword = 0
-ForceLogoffWhenHourExpire = 0
-[Registry Values]
-[Privilege Rights]
-[Version]
-signature="$CHICAGO$"
-Revision=1'
-          
-          $tempFile = "$env:TEMP\secpol.inf"
-          $secpolContent | Out-File -FilePath $tempFile -Encoding ascii
-          secedit /configure /db "$env:TEMP\secedit.sdb" /cfg $tempFile /areas SECURITYPOLICY
-          Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-          
-          Write-Host "Step 2: Creating user..."
-          
-          # Try with a strong password
+          # Method 1: Try with a strong password first
           $password = "Mickey@Secure123!"
           
-          # Try PowerShell method
           try {
               $securePass = ConvertTo-SecureString $password -AsPlainText -Force
               New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
@@ -69,41 +43,39 @@ Revision=1'
               
               Add-LocalGroupMember -Group "Administrators" -Member "MICKEY" -ErrorAction Stop
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY" -ErrorAction Stop
-              Write-Host "✓ User added to required groups"
               
           } catch {
-              Write-Host "PowerShell failed, trying NET USER..."
-              net user MICKEY $password /add /y /expires:never /fullname:"RDP User"
+              Write-Host "Method 1 failed, trying NET USER..."
+              
+              # Method 2: Use NET USER command
+              net user MICKEY $password /add /y /expires:never
               net localgroup administrators MICKEY /add
               net localgroup "Remote Desktop Users" MICKEY /add
           }
           
-          Write-Host "Step 3: Verifying user creation..."
-          
-          # Check if user exists
+          # Check if user was created
           $user = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
-          if ($user) {
-              echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
-              Write-Host "✓ User verified successfully"
-              Write-Host "Username: MICKEY"
-              Write-Host "Password: $password"
-          else {
-              Write-Host "User not found, trying with different password..."
+          if (-not $user) {
+              Write-Host "Trying with different password..."
               
-              # Try with original password
+              # Method 3: Try with the original password using a different approach
               $password = "Mickey@123"
-              net user MICKEY $password /add /y /expires:never
+              $command = "net user MICKEY `"$password`" /add /y /expires:never"
+              Invoke-Expression $command
               net localgroup administrators MICKEY /add
               net localgroup "Remote Desktop Users" MICKEY /add
-              
-              $finalCheck = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
-              if ($finalCheck) {
-                  echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
-                  Write-Host "✓ User created successfully"
-              else {
-                  Write-Error "❌ All user creation methods failed"
-                  exit 1
-              }
+          }
+          
+          # Final verification
+          $finalUser = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
+          if ($finalUser) {
+              echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
+              Write-Host "✓ User created successfully"
+              Write-Host "Username: MICKEY"
+              Write-Host "Password: $password"
+          } else {
+              Write-Error "❌ User creation failed"
+              exit 1
           }
 
       - name: Install Tailscale
