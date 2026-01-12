@@ -37,7 +37,7 @@ jobs:
           net accounts /MINPWLEN:1
           
           # Use a password that definitely meets requirements
-          $password = "Mickey@123#"
+          $password = "P@ssw0rd123!"
           
           # Create user using cmd.exe to avoid PowerShell restrictions
           cmd.exe /c "net user MICKEY $password /add /Y /expires:never"
