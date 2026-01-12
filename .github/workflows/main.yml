@@ -1,4 +1,4 @@
-name: RDP-Fixed-Password
+name: RDP-Tailscale-Fixed
 
 on:
   workflow_dispatch:
@@ -11,35 +11,31 @@ jobs:
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Remote Desktop enable karna aur security settings adjust karna
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                           -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                           -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                           -Name "SecurityLayer" -Value 0 -Force
-
-          # Firewall rule set karna
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-              dir=in action=allow protocol=TCP localport=3389
-
-          Restart-Service -Name TermService -Force
+          # Registry settings update (RDP enable)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 1 -Force
+          
+          # Firewall rules ko enable karna (Stuck-free method)
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          netsh advfirewall firewall add rule name="Allow-RDP" dir=in action=allow protocol=TCP localport=3389 -ErrorAction SilentlyContinue
+          
+          Write-Host "RDP Settings Applied Successfully."
 
       - name: Create RDP User (Fixed Password)
         run: |
-          # Aapka bataya hua fixed password set kar diya hai
+          # User: MICKEY | Password: Mickey@123
           $password = "Mickey@123"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          # Naya user banana
-          New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "MICKEY"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY"
-          
-          # Login info environment me save karna
-          echo "TAILSCALE_USER=MICKEY" >> $env:GITHUB_ENV
-          echo "TAILSCALE_PASS=$password" >> $env:GITHUB_ENV
+          if (-not (Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name "MICKEY" -Password $securePass -Description "RDP User" -AccountNeverExpires
+              Add-LocalGroupMember -Group "Administrators" -Member "MICKEY"
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY"
+              Write-Host "User MICKEY created."
+          } else {
+              Write-Host "User MICKEY already exists."
+          }
 
       - name: Install Tailscale
         run: |
@@ -48,37 +44,40 @@ jobs:
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
+          Write-Host "Tailscale Installed."
 
       - name: Establish Tailscale Connection
         run: |
-          # Tailscale connect karna
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          # Tailscale up command
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-${{ github.run_id }}
           
-          # IP assign hone ka wait karna
+          # Wait and fetch IP
           $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
+          for ($i=0; $i -lt 12; $i++) {
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              if ($tsIP) { break }
+              Write-Host "Waiting for Tailscale IP..."
               Start-Sleep -Seconds 5
-              $retries++
           }
           
           if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned."
+              Write-Host "Failed to get Tailscale IP."
               exit 1
           }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
+          echo "TS_IP=$tsIP" >> $env:GITHUB_ENV
+
       - name: Maintain Connection
         run: |
-          Write-Host "`n=============================="
-          Write-Host "RDP CONNECT INFO"
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: $env:TAILSCALE_USER"
-          Write-Host "Password: $env:TAILSCALE_PASS"
-          Write-Host "==============================`n"
+          Write-Host "`n========================================"
+          Write-Host "       RDP LOGIN DETAILS"
+          Write-Host "========================================"
+          Write-Host "IP ADDRESS : $env:TS_IP"
+          Write-Host "USERNAME   : MICKEY"
+          Write-Host "PASSWORD   : Mickey@123"
+          Write-Host "========================================"
+          Write-Host "Note: Keep this tab open to stay connected."
           
           while ($true) {
-              Write-Host "[$(Get-Date)] Machine Online - Connect using Tailscale IP"
+              Write-Host "[$(Get-Date)] Status: Connection Active"
               Start-Sleep -Seconds 300
           }
