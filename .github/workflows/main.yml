@@ -110,21 +110,8 @@ jobs:
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           Write-Host "===============================`n"
           
-          Write-Host "RDP session is now active. Use the credentials above to connect."
-          Write-Host "This runner will stay active for 60 minutes or until cancelled."
-          
-          $startTime = Get-Date
-          $timeoutMinutes = 60
-          
+          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
-              $elapsed = (Get-Date) - $startTime
-              $minutesElapsed = [math]::Round($elapsed.TotalMinutes, 1)
-              
-              if ($minutesElapsed -ge $timeoutMinutes) {
-                  Write-Host "Session timeout reached ($timeoutMinutes minutes). Shutting down..."
-                  break
-              }
-              
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - $minutesElapsed minutes elapsed"
-              Start-Sleep -Seconds 30
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
           }
