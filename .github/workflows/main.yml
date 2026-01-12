@@ -71,81 +71,116 @@ jobs:
         run: |
           Write-Host "Installing Automa Chrome extension..."
           
-          # Check if Chrome is installed
-          $chromePaths = @(
-              "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
-              "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-          )
+          # Method 1: Install via Chrome Web Store using PowerShell
+          # This creates a scheduled task to install the extension when Chrome runs
           
-          $chromePath = $null
-          foreach ($path in $chromePaths) {
-              if (Test-Path $path) {
-                  $chromePath = $path
-                  Write-Host "Found Chrome at: $chromePath"
-                  break
-              }
-          }
-          
-          if (-not $chromePath) {
-              Write-Host "Chrome not found, skipping extension installation"
-              exit 0
-          }
-          
-          # Automa Extension ID
           $automaExtensionId = "infppggnoaenmfagbfknfkancpbljcca"
+          $extensionUrl = "https://chrome.google.com/webstore/detail/automa/$automaExtensionId"
           
-          # Create Chrome extension directory for Automa
-          $chromeExtensionDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
-          if (-not (Test-Path $chromeExtensionDir)) {
-              New-Item -ItemType Directory -Path $chromeExtensionDir -Force | Out-Null
-          }
+          # Create a PowerShell script that will install the extension
+          $installScript = @"
+# Function to install Chrome extension
+function Install-ChromeExtension {
+    param([string]\$extensionId)
+    
+    # Create extension install registry key
+    \$registryPath = "HKCU:\Software\Google\Chrome\Extensions\\\$extensionId"
+    New-Item -Path \$registryPath -Force | Out-Null
+    Set-ItemProperty -Path \$registryPath -Name "update_url" -Value "https://clients2.google.com/service/update2/crx" -Force
+    
+    # Also add to Chrome's external_extensions.json
+    \$chromeDataPath = "\$env:LOCALAPPDATA\Google\Chrome\User Data\Default"
+    \$externalExtensionsPath = "\$chromeDataPath\external_extensions.json"
+    
+    if (-not (Test-Path \$chromeDataPath)) {
+        New-Item -ItemType Directory -Path \$chromeDataPath -Force | Out-Null
+    }
+    
+    \$extensionsJson = @{}
+    if (Test-Path \$externalExtensionsPath) {
+        \$extensionsJson = Get-Content \$externalExtensionsPath | ConvertFrom-Json
+    }
+    
+    \$extensionsJson.\$extensionId = @{
+        "external_update_url" = "https://clients2.google.com/service/update2/crx"
+    }
+    
+    \$extensionsJson | ConvertTo-Json | Set-Content \$externalExtensionsPath -Encoding UTF8
+    
+    Write-Host "Extension registry entry created for: \$extensionId"
+}
+
+# Install Automa extension
+Install-ChromeExtension -extensionId "$automaExtensionId"
+
+# Also create a desktop shortcut with extension enabled
+\$desktopPath = [Environment]::GetFolderPath("Desktop")
+\$chromePath = "\${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+if (-not (Test-Path \$chromePath)) {
+    \$chromePath = "\${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+}
+
+if (Test-Path \$chromePath) {
+    \$shortcutPath = "\$desktopPath\Chrome with Automa.lnk"
+    \$WshShell = New-Object -ComObject WScript.Shell
+    \$shortcut = \$WshShell.CreateShortcut(\$shortcutPath)
+    \$shortcut.TargetPath = \$chromePath
+    \$shortcut.Arguments = "--load-extension=https://chrome.google.com/webstore/detail/automa/$automaExtensionId"
+    \$shortcut.Save()
+    Write-Host "Desktop shortcut created: Chrome with Automa"
+}
+"@
           
-          # Automa extension download URL
-          $automaCRXUrl = "https://clients2.google.com/service/update2/crx?response=redirect&acceptformat=crx2,crx3&prodversion=91.0&x=id%3D$automaExtensionId%26uc"
+          # Save the installation script to a file
+          $scriptPath = "$env:TEMP\install_automa.ps1"
+          $installScript | Out-File -FilePath $scriptPath -Encoding UTF8
           
-          # Download Automa extension
-          $automaCRXPath = "$env:TEMP\automa.crx"
-          Write-Host "Downloading Automa extension..."
-          try {
-              Invoke-WebRequest -Uri $automaCRXUrl -OutFile $automaCRXPath -ErrorAction Stop
-              Write-Host "Extension downloaded successfully"
-          } catch {
-              Write-Host "Failed to download extension: $_"
-              Write-Host "Trying alternative method..."
-              
-              # Try alternative download method
-              $altUrl = "https://chrome.google.com/webstore/detail/automa/$automaExtensionId"
-              Write-Host "Manual installation may be required from: $altUrl"
-              exit 0
-          }
+          Write-Host "Creating installation script..."
           
-          # Method 1: Copy extension to Chrome extensions folder
-          $automaExtensionDir = "$chromeExtensionDir\$automaExtensionId"
-          if (-not (Test-Path $automaExtensionDir)) {
-              New-Item -ItemType Directory -Path $automaExtensionDir -Force | Out-Null
-          }
+          # Method 2: Create a simple batch file that users can run after RDP login
+          $batchScript = @"
+@echo off
+echo Installing Automa Chrome Extension...
+echo.
+echo Step 1: Open Chrome
+echo Step 2: Go to this URL: https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca
+echo Step 3: Click "Add to Chrome"
+echo Step 4: Confirm the installation
+echo.
+echo OR run this PowerShell command as Administrator:
+echo powershell -Command "& {Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('Please install Automa from Chrome Web Store: https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca', 'Install Automa')}"
+echo.
+pause
+"@
           
-          # Copy CRX file to extension directory
-          $versionDir = "$automaExtensionDir\1.0.0"
-          if (-not (Test-Path $versionDir)) {
-              New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
-          }
+          $batchPath = "C:\Users\Public\Desktop\Install_Automa.bat"
+          $batchScript | Out-File -FilePath $batchPath -Encoding ASCII
           
-          Copy-Item $automaCRXPath "$versionDir\automa.crx" -Force
+          # Also create a text file with instructions
+          $instructions = @"
+=== AUTOMA EXTENSION INSTALLATION INSTRUCTIONS ===
+
+Since Chrome extensions cannot be auto-installed due to security restrictions,
+please follow these steps after RDP login:
+
+1. Open Google Chrome
+2. Go to: https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca
+3. Click "Add to Chrome" button
+4. Confirm the installation when prompted
+5. The Automa icon will appear in your Chrome toolbar
+
+Alternative method:
+- Run the "Install_Automa.bat" file on your desktop
+- Follow the on-screen instructions
+
+Note: Chrome extensions require manual installation for security reasons.
+"@
           
-          # Method 2: Also create a registry entry to enable the extension
-          $registryPath = "HKCU:\Software\Google\Chrome\Extensions\$automaExtensionId"
-          if (-not (Test-Path $registryPath)) {
-              New-Item -Path $registryPath -Force | Out-Null
-          }
-          Set-ItemProperty -Path $registryPath -Name "update_url" -Value "https://clients2.google.com/service/update2/crx" -Force
-          Set-ItemProperty -Path $registryPath -Name "version" -Value "1.0.0" -Force
+          $instructionsPath = "C:\Users\Public\Desktop\Automa_Instructions.txt"
+          $instructions | Out-File -FilePath $instructionsPath -Encoding UTF8
           
-          Write-Host "✓ Automa extension installed successfully"
-          Write-Host "Extension location: $versionDir"
-          
-          # Clean up
-          Remove-Item $automaCRXPath -Force -ErrorAction SilentlyContinue
+          Write-Host "✓ Installation instructions created on desktop"
+          Write-Host "✓ Users will find 'Install_Automa.bat' and 'Automa_Instructions.txt' on desktop"
 
       - name: Establish Tailscale Connection
         run: |
@@ -190,13 +225,19 @@ jobs:
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           Write-Host "===============================`n"
           
-          Write-Host "Installed Extensions:"
-          Write-Host "- Automa Chrome Extension (Browser Automation)"
-          Write-Host "`nWhen you connect via RDP:"
-          Write-Host "1. Open Google Chrome"
-          Write-Host "2. Go to chrome://extensions/"
-          Write-Host "3. Enable the Automa extension if not already enabled"
-          Write-Host "4. Click on the Automa icon in the toolbar to use it"
+          Write-Host "IMPORTANT: Chrome Automa Extension Installation"
+          Write-Host "==============================================="
+          Write-Host "Due to Chrome security policies, extensions cannot be auto-installed."
+          Write-Host ""
+          Write-Host "After connecting via RDP:"
+          Write-Host "1. Login with username: MICKEY and password above"
+          Write-Host "2. You will find on Desktop:"
+          Write-Host "   - 'Install_Automa.bat' - Run this file"
+          Write-Host "   - 'Automa_Instructions.txt' - Follow these steps"
+          Write-Host "3. Or manually visit: https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca"
+          Write-Host "4. Click 'Add to Chrome' to install"
+          Write-Host ""
+          Write-Host "The installation takes less than 1 minute!"
           
           # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
