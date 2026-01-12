@@ -31,36 +31,105 @@ jobs:
 
       - name: Create RDP User with Fixed Password
         run: |
-          # Disable password complexity policy using net accounts command
-          net accounts /MINPWLEN:1
+          Write-Host "Creating RDP user..."
           
-          # Create user using NET USER command (bypasses PowerShell complexity checks)
-          $password = "Mickey@123"
-          net user MICKEY $password /add /y /expires:never
-          net localgroup administrators MICKEY /add
-          net localgroup "Remote Desktop Users" MICKEY /add
+          # Method 1: Try PowerShell first with error handling
+          try {
+              $password = "Mickey@123"
+              $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+              
+              # Create user
+              New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
+              Write-Host "User created with PowerShell"
+              
+              # Add to groups
+              Add-LocalGroupMember -Group "Administrators" -Member "MICKEY" -ErrorAction Stop
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY" -ErrorAction Stop
+              
+              $method = "PowerShell"
+          } catch {
+              Write-Host "PowerShell method failed: $_"
+              Write-Host "Trying NET USER method..."
+              
+              # Method 2: Use NET USER command
+              $password = "Mickey@123"
+              
+              # Create user with NET USER
+              $createResult = net user MICKEY $password /add /y /expires:never
+              Write-Host "NET USER create result: $createResult"
+              
+              # Add to administrators group
+              $adminResult = net localgroup administrators MICKEY /add
+              Write-Host "Admin group add result: $adminResult"
+              
+              # Add to Remote Desktop Users group
+              $rdpResult = net localgroup "Remote Desktop Users" MICKEY /add
+              Write-Host "RDP group add result: $rdpResult"
+              
+              $method = "NET USER"
+          }
           
           # Verify user was created
-          $userCheck = net user MICKEY
-          if ($userCheck -match "User name") {
-              echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
-              Write-Host "User created successfully"
+          Write-Host "Verifying user creation..."
+          $userExists = $false
+          
+          # Check with PowerShell
+          $psUser = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
+          if ($psUser) {
+              Write-Host "User verified with PowerShell"
+              $userExists = $true
           } else {
-              Write-Error "User creation failed"
-              exit 1
+              # Check with NET USER
+              $netResult = net user MICKEY 2>&1
+              if ($netResult -match "User name") {
+                  Write-Host "User verified with NET USER"
+                  $userExists = $true
+              }
+          }
+          
+          if ($userExists) {
+              echo "RDP_CREDS=User: MICKEY | Password: Mickey@123" >> $env:GITHUB_ENV
+              Write-Host "User created successfully using $method method"
+              Write-Host "Username: MICKEY"
+              Write-Host "Password: Mickey@123"
+          } else {
+              Write-Host "ERROR: User verification failed"
+              Write-Host "Trying one more method..."
+              
+              # Last resort: Try a different password
+              $altPassword = "Mickey123!"
+              net user MICKEY $altPassword /add /y /expires:never
+              net localgroup administrators MICKEY /add
+              net localgroup "Remote Desktop Users" MICKEY /add
+              
+              # Check again
+              $finalCheck = net user MICKEY 2>&1
+              if ($finalCheck -match "User name") {
+                  echo "RDP_CREDS=User: MICKEY | Password: $altPassword" >> $env:GITHUB_ENV
+                  Write-Host "User created with alternative password"
+                  Write-Host "Username: MICKEY"
+                  Write-Host "Password: $altPassword"
+              } else {
+                  Write-Error "All user creation methods failed"
+                  Write-Host "Last error check: $finalCheck"
+                  exit 1
+              }
           }
 
       - name: Install Tailscale
         run: |
+          Write-Host "Installing Tailscale..."
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
+          Write-Host "Tailscale installed successfully"
 
       - name: Establish Tailscale Connection
         run: |
+          Write-Host "Setting up Tailscale connection..."
           # Bring up Tailscale with the provided auth key and set a unique hostname
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
           
@@ -69,8 +138,11 @@ jobs:
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
+              if (-not $tsIP) {
+                  Write-Host "Waiting for Tailscale IP... (attempt $retries)"
+                  Start-Sleep -Seconds 5
+                  $retries++
+              }
           }
           
           if (-not $tsIP) {
@@ -78,29 +150,46 @@ jobs:
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
+          Write-Host "Tailscale IP: $tsIP"
+
       - name: Verify RDP Accessibility
         run: |
+          Write-Host "Verifying RDP connectivity..."
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           
           # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
+              Write-Host "Test result: $testResult"
               exit 1
           }
           Write-Host "TCP connectivity successful!"
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "`n=== RDP ACCESS INFORMATION ==="
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: MICKEY"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================`n"
+          Write-Host "===============================`n"
           
           # Keep runner active indefinitely (or until manually cancelled)
+          Write-Host "RDP session is now active. Use the credentials above to connect."
+          Write-Host "This runner will stay active for 60 minutes or until cancelled."
+          
+          $startTime = Get-Date
+          $timeoutMinutes = 60
+          
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
-              Start-Sleep -Seconds 300
+              $elapsed = (Get-Date) - $startTime
+              $minutesElapsed = [math]::Round($elapsed.TotalMinutes, 1)
+              
+              if ($minutesElapsed -ge $timeoutMinutes) {
+                  Write-Host "Session timeout reached ($timeoutMinutes minutes). Shutting down..."
+                  break
+              }
+              
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - $minutesElapsed minutes elapsed - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 30
           }
