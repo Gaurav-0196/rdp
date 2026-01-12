@@ -59,74 +59,164 @@ jobs:
       - name: Install Tailscale
         run: |
           Write-Host "Installing Tailscale..."
+          
+          # Download Tailscale installer
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
-          Write-Host "Tailscale installed successfully"
+          try {
+              Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath -TimeoutSec 60
+              Write-Host "Tailscale installer downloaded"
+          } catch {
+              Write-Host "Failed to download, trying alternative URL..."
+              $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+              Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath -TimeoutSec 60
+          }
+          
+          # Install Tailscale silently
+          Write-Host "Installing Tailscale (this may take a minute)..."
+          $installResult = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
+          
+          if ($installResult.ExitCode -eq 0 -or $installResult.ExitCode -eq 3010) {
+              Write-Host "✓ Tailscale installed successfully (Exit code: $($installResult.ExitCode))"
+          } else {
+              Write-Host "⚠ Tailscale installation warning (Exit code: $($installResult.ExitCode)) - continuing anyway"
+          }
+          
+          # Clean up installer
+          Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+          
+          # Give Tailscale service time to start
+          Write-Host "Waiting for Tailscale service to start..."
+          Start-Sleep -Seconds 10
+
+      - name: Establish Tailscale Connection
+        run: |
+          Write-Host "Setting up Tailscale connection..."
+          
+          # Check if Tailscale is installed
+          $tailscalePath = "${env:ProgramFiles}\Tailscale\tailscale.exe"
+          if (-not (Test-Path $tailscalePath)) {
+              Write-Host "Tailscale not found at $tailscalePath"
+              Write-Host "Checking alternative location..."
+              $tailscalePath = "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe"
+          }
+          
+          if (-not (Test-Path $tailscalePath)) {
+              Write-Error "Tailscale not installed. Exiting."
+              exit 1
+          }
+          
+          Write-Host "Tailscale found at: $tailscalePath"
+          
+          # Start Tailscale with authkey
+          Write-Host "Starting Tailscale connection..."
+          $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
+          
+          if ([string]::IsNullOrEmpty($authKey)) {
+              Write-Error "TAILSCALE_AUTH_KEY secret is not set. Please add it to GitHub Secrets."
+              exit 1
+          }
+          
+          Write-Host "Using Tailscale auth key (first 10 chars): $($authKey.Substring(0, [math]::Min(10, $authKey.Length)))..."
+          
+          # Run Tailscale up command
+          & $tailscalePath up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --accept-dns --reset
+          
+          # Check if command succeeded
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "Tailscale up command failed with exit code: $LASTEXITCODE"
+              Write-Host "Trying without reset flag..."
+              & $tailscalePath up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
+          }
+          
+          # Wait for Tailscale to assign an IP with timeout
+          Write-Host "Waiting for Tailscale IP assignment..."
+          $tsIP = $null
+          $maxRetries = 30  # 30 retries * 5 seconds = 150 seconds max wait
+          $retryCount = 0
+          
+          while (-not $tsIP -and $retryCount -lt $maxRetries) {
+              try {
+                  $tsIP = & $tailscalePath ip -4 2>$null
+                  if (-not $tsIP) {
+                      Write-Host "No IP yet... ($retryCount/$maxRetries)"
+                      Start-Sleep -Seconds 5
+                      $retryCount++
+                  }
+              } catch {
+                  Write-Host "Error checking IP: $_"
+                  Start-Sleep -Seconds 5
+                  $retryCount++
+              }
+          }
+          
+          if (-not $tsIP) {
+              Write-Host "⚠ Tailscale IP not assigned after $maxRetries attempts."
+              Write-Host "Checking Tailscale status..."
+              & $tailscalePath status
+              
+              Write-Host "Trying to get any IP (v4 or v6)..."
+              $tsIP = & $tailscalePath ip 2>$null
+              
+              if (-not $tsIP) {
+                  Write-Host "⚠ Continuing without Tailscale IP - RDP may not be accessible"
+                  echo "TAILSCALE_IP=NOT_ASSIGNED" >> $env:GITHUB_ENV
+              } else {
+                  echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+                  Write-Host "Tailscale IP (any): $tsIP"
+              }
+          } else {
+              echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+              Write-Host "✓ Tailscale IPv4: $tsIP"
+          }
+          
+          # Display Tailscale status for debugging
+          Write-Host "Tailscale status:"
+          & $tailscalePath status
+
+      - name: Verify RDP Accessibility (Optional)
+        run: |
+          Write-Host "Checking RDP connectivity..."
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          
+          if ($env:TAILSCALE_IP -eq "NOT_ASSIGNED") {
+              Write-Host "⚠ Skipping RDP connectivity test - Tailscale IP not assigned"
+              Write-Host "You may need to manually check Tailscale connection after RDP login"
+          } else {
+              # Test connectivity using Test-NetConnection
+              $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+              if ($testResult.TcpTestSucceeded) {
+                  Write-Host "✓ TCP connection to RDP port 3389 successful!"
+              } else {
+                  Write-Host "⚠ TCP connection to RDP port 3389 failed or timed out"
+                  Write-Host "This may be normal if Windows Firewall is blocking or Tailscale is still connecting"
+                  Write-Host "You can still try to connect via RDP"
+              }
+          }
 
       - name: Install Automa Chrome Extension
         run: |
-          Write-Host "Installing Automa Chrome extension..."
+          Write-Host "Creating Automa extension installation files..."
           
-          # Create batch file content as an array of lines
+          # Create batch file
           $batchLines = @(
             '@echo off',
             'echo ============================================',
             'echo AUTOMA CHROME EXTENSION INSTALLATION',
             'echo ============================================',
             'echo.',
-            'echo Please follow these steps:',
-            'echo.',
-            'echo 1. Open Google Chrome',
-            'echo 2. Visit this URL: ',
-            'echo    https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
-            'echo 3. Click "Add to Chrome" button',
-            'echo 4. Confirm the installation',
-            'echo.',
-            'echo The extension will appear in your Chrome toolbar!',
-            'echo.',
-            'echo Note: This must be done manually due to Chrome security policies.',
+            'echo 1. Open Chrome',
+            'echo 2. Visit: https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
+            'echo 3. Click "Add to Chrome"',
             'echo.',
             'pause'
           )
           
-          # Save batch file to desktop
           $batchPath = "C:\Users\Public\Desktop\Install_Automa.bat"
           $batchLines -join "`r`n" | Out-File -FilePath $batchPath -Encoding ASCII
           
-          # Create text file content as an array of lines
-          $textLines = @(
-            'AUTOMA CHROME EXTENSION - INSTALLATION GUIDE',
-            '=============================================',
-            '',
-            'STEP-BY-STEP INSTRUCTIONS:',
-            '',
-            '1. Open Google Chrome',
-            '2. Go to this URL:',
-            '   https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
-            '',
-            '3. Click the BLUE "Add to Chrome" button',
-            '4. Click "Add extension" in the confirmation popup',
-            '5. Wait for installation to complete',
-            '6. The Automa icon will appear in Chrome toolbar (top-right)',
-            '',
-            'QUICK INSTALL:',
-            '- Double-click "Install_Automa.bat" on desktop',
-            '- Follow the instructions',
-            '- Or just visit the URL above directly in Chrome',
-            '',
-            'NOTE: Chrome extensions require manual installation for security reasons.',
-            'This takes less than 1 minute to complete!'
-          )
-          
-          # Save text file to desktop
-          $textPath = "C:\Users\Public\Desktop\Automa_Instructions.txt"
-          $textLines -join "`r`n" | Out-File -FilePath $textPath -Encoding UTF8
-          
-          # Create URL shortcut content
+          # Create URL shortcut
           $urlLines = @(
             '[InternetShortcut]',
             'URL=https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca'
@@ -135,174 +225,65 @@ jobs:
           $urlPath = "C:\Users\Public\Desktop\Install Automa.url"
           $urlLines -join "`r`n" | Out-File -FilePath $urlPath -Encoding ASCII
           
-          Write-Host "✓ Created installation files on desktop:"
-          Write-Host "  - Install_Automa.bat (run this)"
-          Write-Host "  - Automa_Instructions.txt"
-          Write-Host "  - Install Automa.url (direct link)"
+          Write-Host "✓ Created Automa installation files on desktop"
 
       - name: Create Instagram Auto Account Creator
         run: |
-          Write-Host "Creating Instagram account automation script..."
+          Write-Host "Creating Instagram automation tool..."
           
-          # Create the batch file using simple echo commands
+          # Create batch file
           $batchLines = @(
             '@echo off',
             'echo ============================================',
             'echo INSTAGRAM ACCOUNT CREATION TOOL',
             'echo ============================================',
             'echo.',
-            'echo This tool will:',
-            'echo 1. Open Instagram signup page',
-            'echo 2. Open temporary email services',
-            'echo 3. Generate random account credentials',
+            'echo Opening Instagram signup and temp email services...',
             'echo.',
-            'echo Press any key to start...',
-            'pause >nul',
-            '',
-            'REM Generate random number for username',
-            'set /a rand=%random%',
-            'set username=InstaUser%rand%',
-            '',
-            'REM Generate password',
-            'set password=Pass%rand%!@#',
-            '',
-            'REM Open Instagram signup page',
             'start chrome --new-window "https://www.instagram.com/accounts/emailsignup/"',
-            '',
-            'REM Open temporary email services',
-            'timeout /t 2 /nobreak >nul',
+            'timeout /t 3 /nobreak >nul',
             'start chrome --new-tab "https://temp-mail.org/"',
             'timeout /t 2 /nobreak >nul',
             'start chrome --new-tab "https://10minutemail.com/"',
-            '',
             'echo.',
-            'echo ============================================',
-            'echo GENERATED CREDENTIALS:',
-            'echo ============================================',
-            'echo Username: %username%',
-            'echo Password: %password%',
-            'echo Email: Use temporary email from opened tabs',
+            'echo Chrome windows opened with:',
+            'echo 1. Instagram signup',
+            'echo 2. Temp-mail.org',
+            'echo 3. 10MinuteMail',
             'echo.',
-            'echo STEPS TO CREATE ACCOUNT:',
-            'echo 1. Use username: %username%',
-            'echo 2. Use password: %password%',
-            'echo 3. Copy email from temp-mail.org',
-            'echo 4. Complete Instagram signup form',
-            'echo 5. Check temp email for verification code',
-            'echo 6. Enter verification code on Instagram',
-            'echo.',
-            'echo Press any key to exit...',
-            'pause >nul'
+            'pause'
           )
           
-          # Save batch file
-          $batchPath = "C:\Users\Public\Desktop\Instagram_Account_Creator.bat"
+          $batchPath = "C:\Users\Public\Desktop\Instagram_Tool.bat"
           $batchLines -join "`r`n" | Out-File -FilePath $batchPath -Encoding ASCII
           
-          # Create a simple text guide
-          $guideLines = @(
-            'INSTAGRAM ACCOUNT CREATION AUTOMATION GUIDE',
-            '============================================',
-            '',
-            'QUICK START:',
-            '1. Double-click "Instagram_Account_Creator.bat" on desktop',
-            '2. Press any key when prompted',
-            '3. Chrome will open with:',
-            '   - Instagram signup page',
-            '   - Temp email service 1',
-            '   - Temp email service 2',
-            '',
-            'GENERATED CREDENTIALS:',
-            '- Random username (e.g., InstaUser12345)',
-            '- Strong password',
-            '- Use temporary email from opened tabs',
-            '',
-            'STEPS TO CREATE ACCOUNT:',
-            '1. On Instagram page, enter the generated username',
-            '2. Enter the generated password',
-            '3. Go to temp-mail.org and copy the email address',
-            '4. Paste email in Instagram form',
-            '5. Complete other details (name, birthday)',
-            '6. Check temp email for verification code',
-            '7. Enter code on Instagram',
-            '8. Account created!',
-            '',
-            'TIPS:',
-            '- Use different usernames each time',
-            '- Clear browser cookies between accounts',
-            '- Use VPN for multiple accounts',
-            '- Instagram may limit 3-5 accounts per day per IP'
-          )
-          
-          # Save guide
-          $guidePath = "C:\Users\Public\Desktop\Instagram_Guide.txt"
-          $guideLines -join "`r`n" | Out-File -FilePath $guidePath -Encoding UTF8
-          
-          Write-Host "✓ Created Instagram automation tools on desktop:"
-          Write-Host "  - Instagram_Account_Creator.bat (main tool)"
-          Write-Host "  - Instagram_Guide.txt (instructions)"
-
-      - name: Establish Tailscale Connection
-        run: |
-          Write-Host "Setting up Tailscale connection..."
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              if (-not $tsIP) {
-                  Write-Host "Waiting for Tailscale IP... (attempt $retries)"
-                  Start-Sleep -Seconds 5
-                  $retries++
-              }
-          }
-          
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
-              exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          Write-Host "Tailscale IP: $tsIP"
-
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Verifying RDP connectivity..."
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
-          }
-          Write-Host "TCP connectivity successful!"
+          Write-Host "✓ Created Instagram tool on desktop"
 
       - name: Maintain Connection
         run: |
           Write-Host "`n=== RDP ACCESS INFORMATION ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: MICKEY"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
+          
+          if ($env:TAILSCALE_IP -ne "NOT_ASSIGNED") {
+              Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+              Write-Host "Connect via: Remote Desktop -> $env:TAILSCALE_IP"
+          } else {
+              Write-Host "⚠ Tailscale IP: NOT ASSIGNED"
+              Write-Host "After RDP login, check Tailscale icon in system tray"
+              Write-Host "or run: tailscale status in Command Prompt"
+          }
+          
           Write-Host "===============================`n"
           
-          Write-Host "TOOLS AVAILABLE ON DESKTOP:"
-          Write-Host "============================="
-          Write-Host "1. AUTOMA EXTENSION:"
-          Write-Host "   - Install_Automa.bat"
-          Write-Host "   - Install Automa.url"
-          Write-Host "   - Automa_Instructions.txt"
+          Write-Host "DESKTO TOOLS:"
+          Write-Host "1. Install_Automa.bat - Chrome extension"
+          Write-Host "2. Instagram_Tool.bat - Account creator"
           Write-Host ""
-          Write-Host "2. INSTAGRAM ACCOUNT CREATOR:"
-          Write-Host "   - Instagram_Account_Creator.bat (double-click this)"
-          Write-Host "   - Instagram_Guide.txt"
-          Write-Host ""
-          Write-Host "USAGE:"
-          Write-Host "- Double-click Instagram_Account_Creator.bat"
-          Write-Host "- It opens Chrome with all needed pages"
-          Write-Host "- Generates random credentials automatically"
+          Write-Host "RDP session active. Cancel workflow when done."
           
-          # Keep runner active indefinitely (or until manually cancelled)
+          # Keep active
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Write-Host "[$(Get-Date)] RDP Active"
               Start-Sleep -Seconds 300
           }
