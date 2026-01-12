@@ -29,89 +29,86 @@ jobs:
           # (Optional) Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Fixed Password
+      - name: Disable Password Complexity and Create User
         run: |
-          Write-Host "Creating RDP user..."
+          Write-Host "Step 1: Disabling password complexity requirements..."
           
-          # Method 1: Try PowerShell first with error handling
+          # Method 1: Use secedit to disable password complexity
+          $secpolContent = @"
+[Unicode]
+Unicode=yes
+[System Access]
+MinimumPasswordAge = 0
+MaximumPasswordAge = 42
+MinimumPasswordLength = 1
+PasswordComplexity = 0
+PasswordHistorySize = 0
+LockoutBadCount = 0
+RequireLogonToChangePassword = 0
+ForceLogoffWhenHourExpire = 0
+[Registry Values]
+[Privilege Rights]
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+"@
+          
+          $tempFile = "$env:TEMP\secpol.inf"
+          $secpolContent | Out-File -FilePath $tempFile -Encoding ascii
+          secedit /configure /db "$env:TEMP\secedit.sdb" /cfg $tempFile /areas SECURITYPOLICY
+          Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Step 2: Creating user with simple method..."
+          
+          # Create a simpler password that meets basic requirements
+          $password = "Mickey@1234"  # Added an extra number
+          
+          # Try direct PowerShell method after disabling complexity
           try {
-              $password = "Mickey@123"
               $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-              
-              # Create user
               New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
-              Write-Host "User created with PowerShell"
+              Write-Host "✓ User created with PowerShell"
               
               # Add to groups
               Add-LocalGroupMember -Group "Administrators" -Member "MICKEY" -ErrorAction Stop
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY" -ErrorAction Stop
+              Write-Host "✓ User added to required groups"
               
-              $method = "PowerShell"
           } catch {
-              Write-Host "PowerShell method failed: $_"
-              Write-Host "Trying NET USER method..."
+              Write-Host "PowerShell failed: $_"
+              Write-Host "Trying NET USER with a stronger password..."
               
-              # Method 2: Use NET USER command
-              $password = "Mickey@123"
-              
-              # Create user with NET USER
-              $createResult = net user MICKEY $password /add /y /expires:never
-              Write-Host "NET USER create result: $createResult"
-              
-              # Add to administrators group
-              $adminResult = net localgroup administrators MICKEY /add
-              Write-Host "Admin group add result: $adminResult"
-              
-              # Add to Remote Desktop Users group
-              $rdpResult = net localgroup "Remote Desktop Users" MICKEY /add
-              Write-Host "RDP group add result: $rdpResult"
-              
-              $method = "NET USER"
+              # Try with a stronger password
+              $password = "Mickey@Secure123!"
+              net user MICKEY $password /add /y /expires:never /fullname:"RDP User"
+              net localgroup administrators MICKEY /add
+              net localgroup "Remote Desktop Users" MICKEY /add
           }
           
-          # Verify user was created
-          Write-Host "Verifying user creation..."
-          $userExists = $false
+          Write-Host "Step 3: Verifying user creation..."
           
-          # Check with PowerShell
-          $psUser = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
-          if ($psUser) {
-              Write-Host "User verified with PowerShell"
-              $userExists = $true
-          } else {
-              # Check with NET USER
-              $netResult = net user MICKEY 2>&1
-              if ($netResult -match "User name") {
-                  Write-Host "User verified with NET USER"
-                  $userExists = $true
-              }
-          }
-          
-          if ($userExists) {
-              echo "RDP_CREDS=User: MICKEY | Password: Mickey@123" >> $env:GITHUB_ENV
-              Write-Host "User created successfully using $method method"
+          # Check if user exists
+          $user = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
+          if ($user) {
+              echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
+              Write-Host "✓ User verified successfully"
               Write-Host "Username: MICKEY"
-              Write-Host "Password: Mickey@123"
+              Write-Host "Password: $password"
           } else {
-              Write-Host "ERROR: User verification failed"
-              Write-Host "Trying one more method..."
+              Write-Host "User not found, trying one last method..."
               
-              # Last resort: Try a different password
-              $altPassword = "Mickey123!"
-              net user MICKEY $altPassword /add /y /expires:never
+              # Last resort: Create user with a very simple password first, then change it
+              net user MICKEY "TempPass123!" /add /y /expires:never
+              net user MICKEY "Mickey@123"
               net localgroup administrators MICKEY /add
               net localgroup "Remote Desktop Users" MICKEY /add
               
-              # Check again
-              $finalCheck = net user MICKEY 2>&1
-              if ($finalCheck -match "User name") {
-                  echo "RDP_CREDS=User: MICKEY | Password: $altPassword" >> $env:GITHUB_ENV
-                  Write-Host "User created with alternative password"
-                  Write-Host "Username: MICKEY"
-                  Write-Host "Password: $altPassword"
+              $finalCheck = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
+              if ($finalCheck) {
+                  echo "RDP_CREDS=User: MICKEY | Password: Mickey@123" >> $env:GITHUB_ENV
+                  Write-Host "✓ User created with last resort method"
               } else {
-                  Write-Error "All user creation methods failed"
-                  Write-Host "Last error check: $finalCheck"
+                  Write-Error "❌ All user creation methods failed"
                   exit 1
               }
           }
@@ -130,10 +127,8 @@ jobs:
       - name: Establish Tailscale Connection
         run: |
           Write-Host "Setting up Tailscale connection..."
-          # Bring up Tailscale with the provided auth key and set a unique hostname
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
           
-          # Wait for Tailscale to assign an IP
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -157,11 +152,9 @@ jobs:
           Write-Host "Verifying RDP connectivity..."
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
-              Write-Host "Test result: $testResult"
               exit 1
           }
           Write-Host "TCP connectivity successful!"
@@ -174,7 +167,6 @@ jobs:
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           Write-Host "===============================`n"
           
-          # Keep runner active indefinitely (or until manually cancelled)
           Write-Host "RDP session is now active. Use the credentials above to connect."
           Write-Host "This runner will stay active for 60 minutes or until cancelled."
           
@@ -190,6 +182,6 @@ jobs:
                   break
               }
               
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - $minutesElapsed minutes elapsed - Use Ctrl+C in workflow to terminate"
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP Active - $minutesElapsed minutes elapsed"
               Start-Sleep -Seconds 30
           }
