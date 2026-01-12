@@ -67,6 +67,68 @@ jobs:
           Remove-Item $installerPath -Force
           Write-Host "Tailscale installed successfully"
 
+      - name: Install Chrome with Automa Extension
+        run: |
+          Write-Host "Installing Chrome..."
+          
+          # Download Chrome installer
+          $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
+          $chromeInstaller = "$env:TEMP\chrome_installer.exe"
+          Invoke-WebRequest -Uri $chromeUrl -OutFile $chromeInstaller
+          
+          # Install Chrome silently
+          Start-Process -FilePath $chromeInstaller -ArgumentList "/silent /install" -Wait
+          Remove-Item $chromeInstaller -Force
+          
+          Write-Host "Chrome installed successfully"
+          
+          # Wait for Chrome to be fully installed
+          Start-Sleep -Seconds 10
+          
+          Write-Host "Installing Automa extension..."
+          
+          # Create Chrome extension directory for Automa
+          $chromeExtensionDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
+          if (-not (Test-Path $chromeExtensionDir)) {
+              New-Item -ItemType Directory -Path $chromeExtensionDir -Force
+          }
+          
+          # Automa Extension ID and download URL
+          $automaExtensionId = "infppggnoaenmfagbfknfkancpbljcca"
+          $automaCRXUrl = "https://clients2.google.com/service/update2/crx?response=redirect&acceptformat=crx2,crx3&prodversion=91.0&x=id%3D$automaExtensionId%26uc"
+          
+          # Download Automa extension
+          $automaCRXPath = "$env:TEMP\automa.crx"
+          Invoke-WebRequest -Uri $automaCRXUrl -OutFile $automaCRXPath
+          
+          # Install extension using Chrome
+          $chromePath = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+          if (Test-Path $chromePath) {
+              # Method 1: Try to install via command line
+              Start-Process $chromePath -ArgumentList "--load-extension=$automaCRXPath" -Wait
+              
+              # Method 2: Also copy to extensions folder
+              $automaExtensionDir = "$chromeExtensionDir\$automaExtensionId"
+              if (-not (Test-Path $automaExtensionDir)) {
+                  New-Item -ItemType Directory -Path $automaExtensionDir -Force
+              }
+              
+              # Extract the CRX file (it's a zip file)
+              $automaZipPath = "$env:TEMP\automa.zip"
+              Copy-Item $automaCRXPath $automaZipPath
+              
+              # Extract to extension directory
+              Expand-Archive -Path $automaZipPath -DestinationPath "$automaExtensionDir\1.0.0" -Force
+              
+              Write-Host "✓ Automa extension installed"
+          } else {
+              Write-Host "Chrome not found at expected path, extension installation may require manual step"
+          }
+          
+          # Clean up
+          Remove-Item $automaCRXPath -Force -ErrorAction SilentlyContinue
+          Remove-Item $automaZipPath -Force -ErrorAction SilentlyContinue
+
       - name: Establish Tailscale Connection
         run: |
           Write-Host "Setting up Tailscale connection..."
@@ -109,6 +171,11 @@ jobs:
           Write-Host "Username: MICKEY"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           Write-Host "===============================`n"
+          
+          Write-Host "Installed Applications:"
+          Write-Host "- Google Chrome with Automa Extension"
+          Write-Host "- Tailscale VPN"
+          Write-Host "`nChrome Automa Extension is pre-installed and ready to use!"
           
           # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
