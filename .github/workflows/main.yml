@@ -33,9 +33,8 @@ jobs:
         run: |
           Write-Host "Step 1: Disabling password complexity requirements..."
           
-          # Method 1: Use secedit to disable password complexity
-          $secpolContent = @"
-[Unicode]
+          # Create secpol.inf file
+          $secpolContent = '[Unicode]
 Unicode=yes
 [System Access]
 MinimumPasswordAge = 0
@@ -49,37 +48,31 @@ ForceLogoffWhenHourExpire = 0
 [Registry Values]
 [Privilege Rights]
 [Version]
-signature="`$CHICAGO`$"
-Revision=1
-"@
+signature="$CHICAGO$"
+Revision=1'
           
           $tempFile = "$env:TEMP\secpol.inf"
           $secpolContent | Out-File -FilePath $tempFile -Encoding ascii
           secedit /configure /db "$env:TEMP\secedit.sdb" /cfg $tempFile /areas SECURITYPOLICY
           Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
           
-          Write-Host "Step 2: Creating user with simple method..."
+          Write-Host "Step 2: Creating user..."
           
-          # Create a simpler password that meets basic requirements
-          $password = "Mickey@1234"  # Added an extra number
+          # Try with a strong password
+          $password = "Mickey@Secure123!"
           
-          # Try direct PowerShell method after disabling complexity
+          # Try PowerShell method
           try {
               $securePass = ConvertTo-SecureString $password -AsPlainText -Force
               New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
               Write-Host "✓ User created with PowerShell"
               
-              # Add to groups
               Add-LocalGroupMember -Group "Administrators" -Member "MICKEY" -ErrorAction Stop
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY" -ErrorAction Stop
               Write-Host "✓ User added to required groups"
               
           } catch {
-              Write-Host "PowerShell failed: $_"
-              Write-Host "Trying NET USER with a stronger password..."
-              
-              # Try with a stronger password
-              $password = "Mickey@Secure123!"
+              Write-Host "PowerShell failed, trying NET USER..."
               net user MICKEY $password /add /y /expires:never /fullname:"RDP User"
               net localgroup administrators MICKEY /add
               net localgroup "Remote Desktop Users" MICKEY /add
@@ -94,20 +87,20 @@ Revision=1
               Write-Host "✓ User verified successfully"
               Write-Host "Username: MICKEY"
               Write-Host "Password: $password"
-          } else {
-              Write-Host "User not found, trying one last method..."
+          else {
+              Write-Host "User not found, trying with different password..."
               
-              # Last resort: Create user with a very simple password first, then change it
-              net user MICKEY "TempPass123!" /add /y /expires:never
-              net user MICKEY "Mickey@123"
+              # Try with original password
+              $password = "Mickey@123"
+              net user MICKEY $password /add /y /expires:never
               net localgroup administrators MICKEY /add
               net localgroup "Remote Desktop Users" MICKEY /add
               
               $finalCheck = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
               if ($finalCheck) {
-                  echo "RDP_CREDS=User: MICKEY | Password: Mickey@123" >> $env:GITHUB_ENV
-                  Write-Host "✓ User created with last resort method"
-              } else {
+                  echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
+                  Write-Host "✓ User created successfully"
+              else {
                   Write-Error "❌ All user creation methods failed"
                   exit 1
               }
