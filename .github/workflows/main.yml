@@ -71,65 +71,69 @@ jobs:
         run: |
           Write-Host "Installing Automa Chrome extension..."
           
-          # Simple method: Create desktop shortcuts with instructions
-          
-          # Create a batch file with installation instructions
-          $batchContent = '@echo off
-echo ============================================
-echo AUTOMA CHROME EXTENSION INSTALLATION
-echo ============================================
-echo.
-echo Please follow these steps:
-echo.
-echo 1. Open Google Chrome
-echo 2. Visit this URL: 
-echo    https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca
-echo 3. Click "Add to Chrome" button
-echo 4. Confirm the installation
-echo.
-echo The extension will appear in your Chrome toolbar!
-echo.
-echo Note: This must be done manually due to Chrome security policies.
-echo.
-pause'
+          # Create batch file content as an array of lines
+          $batchLines = @(
+            '@echo off',
+            'echo ============================================',
+            'echo AUTOMA CHROME EXTENSION INSTALLATION',
+            'echo ============================================',
+            'echo.',
+            'echo Please follow these steps:',
+            'echo.',
+            'echo 1. Open Google Chrome',
+            'echo 2. Visit this URL: ',
+            'echo    https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
+            'echo 3. Click "Add to Chrome" button',
+            'echo 4. Confirm the installation',
+            'echo.',
+            'echo The extension will appear in your Chrome toolbar!',
+            'echo.',
+            'echo Note: This must be done manually due to Chrome security policies.',
+            'echo.',
+            'pause'
+          )
           
           # Save batch file to desktop
           $batchPath = "C:\Users\Public\Desktop\Install_Automa.bat"
-          $batchContent | Out-File -FilePath $batchPath -Encoding ASCII
+          $batchLines -join "`r`n" | Out-File -FilePath $batchPath -Encoding ASCII
           
-          # Create a text file with instructions
-          $textContent = 'AUTOMA CHROME EXTENSION - INSTALLATION GUIDE
-=============================================
-
-STEP-BY-STEP INSTRUCTIONS:
-
-1. Open Google Chrome
-2. Go to this URL:
-   https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca
-
-3. Click the BLUE "Add to Chrome" button
-4. Click "Add extension" in the confirmation popup
-5. Wait for installation to complete
-6. The Automa icon will appear in Chrome toolbar (top-right)
-
-QUICK INSTALL:
-- Double-click "Install_Automa.bat" on desktop
-- Follow the instructions
-- Or just visit the URL above directly in Chrome
-
-NOTE: Chrome extensions require manual installation for security reasons.
-This takes less than 1 minute to complete!'
+          # Create text file content as an array of lines
+          $textLines = @(
+            'AUTOMA CHROME EXTENSION - INSTALLATION GUIDE',
+            '=============================================',
+            '',
+            'STEP-BY-STEP INSTRUCTIONS:',
+            '',
+            '1. Open Google Chrome',
+            '2. Go to this URL:',
+            '   https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
+            '',
+            '3. Click the BLUE "Add to Chrome" button',
+            '4. Click "Add extension" in the confirmation popup',
+            '5. Wait for installation to complete',
+            '6. The Automa icon will appear in Chrome toolbar (top-right)',
+            '',
+            'QUICK INSTALL:',
+            '- Double-click "Install_Automa.bat" on desktop',
+            '- Follow the instructions',
+            '- Or just visit the URL above directly in Chrome',
+            '',
+            'NOTE: Chrome extensions require manual installation for security reasons.',
+            'This takes less than 1 minute to complete!'
+          )
           
           # Save text file to desktop
           $textPath = "C:\Users\Public\Desktop\Automa_Instructions.txt"
-          $textContent | Out-File -FilePath $textPath -Encoding UTF8
+          $textLines -join "`r`n" | Out-File -FilePath $textPath -Encoding UTF8
           
-          # Also create a URL shortcut
-          $urlContent = '[InternetShortcut]
-URL=https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca'
+          # Create URL shortcut content
+          $urlLines = @(
+            '[InternetShortcut]',
+            'URL=https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca'
+          )
           
           $urlPath = "C:\Users\Public\Desktop\Install Automa.url"
-          $urlContent | Out-File -FilePath $urlPath -Encoding ASCII
+          $urlLines -join "`r`n" | Out-File -FilePath $urlPath -Encoding ASCII
           
           Write-Host "✓ Created installation files on desktop:"
           Write-Host "  - Install_Automa.bat (run this)"
