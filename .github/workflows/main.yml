@@ -31,58 +31,24 @@ jobs:
 
       - name: Create RDP User with Fixed Password
         run: |
-          # Temporarily disable password complexity policy using a simpler method
-          $secpolContent = '[Unicode]
-Unicode=yes
-[System Access]
-MinimumPasswordAge = 0
-MaximumPasswordAge = 42
-MinimumPasswordLength = 1
-PasswordComplexity = 0
-PasswordHistorySize = 0
-LockoutBadCount = 0
-RequireLogonToChangePassword = 0
-ForceLogoffWhenHourExpire = 0
-[Registry Values]
-[Privilege Rights]
-[Version]
-signature="$CHICAGO$"
-Revision=1'
+          # Disable password complexity policy using net accounts command
+          net accounts /MINPWLEN:1
           
-          $tempFile = "$env:TEMP\secpol.inf"
-          $secpolContent | Out-File -FilePath $tempFile -Encoding ascii
-          
-          # Apply the security policy
-          secedit /configure /db "$env:TEMP\secedit.sdb" /cfg $tempFile /areas SECURITYPOLICY
-          
-          # Now create the user with your desired password
+          # Create user using NET USER command (bypasses PowerShell complexity checks)
           $password = "Mickey@123"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          # Try to create the user
-          try {
-              New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
-              Write-Host "User created successfully using PowerShell"
-          } catch {
-              Write-Host "PowerShell method failed, trying NET USER command..."
-              # Alternative method using NET USER command
-              net user MICKEY $password /add /y /expires:never
-              net localgroup administrators MICKEY /add
-              net localgroup "Remote Desktop Users" MICKEY /add
-          }
+          net user MICKEY $password /add /y /expires:never
+          net localgroup administrators MICKEY /add
+          net localgroup "Remote Desktop Users" MICKEY /add
           
           # Verify user was created
-          $user = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
-          if ($user) {
+          $userCheck = net user MICKEY
+          if ($userCheck -match "User name") {
               echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
-              Write-Host "User verification successful"
+              Write-Host "User created successfully"
           } else {
-              Write-Error "User creation failed completely"
+              Write-Error "User creation failed"
               exit 1
           }
-          
-          # Clean up
-          Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
 
       - name: Install Tailscale
         run: |
