@@ -144,159 +144,102 @@ jobs:
         run: |
           Write-Host "Creating Instagram account automation script..."
           
-          # Create a PowerShell script for Instagram automation
-          $psScript = @'
-# Instagram Account Creator Script
-# This script helps automate Instagram account creation
-
-function Generate-RandomUsername {
-    $adjectives = @("Cool", "Awesome", "Happy", "Sunny", "Crazy", "Wild", "Sweet", "Chill", "Epic", "Magic")
-    $nouns = @("Cat", "Dog", "Tiger", "Panda", "Wolf", "Fox", "Bear", "Lion", "Eagle", "Dragon")
-    $numbers = Get-Random -Minimum 100 -Maximum 9999
-    $adj = Get-Random $adjectives
-    $noun = Get-Random $nouns
-    return "$adj$noun$numbers"
-}
-
-function Generate-RandomPassword {
-    $chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
-    $password = ""
-    1..12 | ForEach-Object {
-        $password += $chars[(Get-Random -Maximum $chars.Length)]
-    }
-    return $password
-}
-
-function Generate-RandomEmail {
-    $domains = @("gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "protonmail.com")
-    $name = Generate-RandomUsername
-    $domain = Get-Random $domains
-    return "$name@$domain"
-}
-
-function Show-InstagramInstructions {
-    Write-Host "================================================"
-    Write-Host "INSTAGRAM ACCOUNT CREATION AUTOMATION"
-    Write-Host "================================================"
-    Write-Host ""
-    Write-Host "Generated Account Details:"
-    Write-Host "Username: $(Generate-RandomUsername)"
-    Write-Host "Password: $(Generate-RandomPassword)"
-    Write-Host "Email: $(Generate-RandomEmail)"
-    Write-Host ""
-    Write-Host "Steps to create Instagram account:"
-    Write-Host "1. Open Chrome and go to: https://www.instagram.com/accounts/emailsignup/"
-    Write-Host "2. Enter the generated details above"
-    Write-Host "3. Complete the signup process"
-    Write-Host "4. Verify email if required"
-    Write-Host ""
-    Write-Host "Note: Use temporary email services for verification:"
-    Write-Host "- https://temp-mail.org/"
-    Write-Host "- https://10minutemail.com/"
-    Write-Host "- https://tempmail.email/"
-    Write-Host ""
-    Write-Host "Press any key to generate new account details..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-}
-
-# Main loop
-while ($true) {
-    Clear-Host
-    Show-InstagramInstructions
-}
-'@
-          
-          # Save PowerShell script
-          $psScriptPath = "C:\Users\Public\Desktop\Instagram_Account_Creator.ps1"
-          $psScript | Out-File -FilePath $psScriptPath -Encoding UTF8
-          
-          # Create a batch file to run the PowerShell script
-          $batchContent = @'
-@echo off
-echo ============================================
-echo INSTAGRAM ACCOUNT CREATION TOOL
-echo ============================================
-echo.
-echo This tool will help you create Instagram accounts
-echo.
-echo Features:
-echo - Generates random usernames
-echo - Generates strong passwords
-echo - Provides temporary email services
-echo - Automatically opens Instagram signup page
-echo.
-echo Instructions:
-echo 1. This tool will open Chrome with Instagram signup
-echo 2. Use the generated credentials
-echo 3. Complete the signup process
-echo 4. Use temp email for verification
-echo.
-echo Press any key to start...
-pause >nul
-
-REM Open Instagram signup page in Chrome
-start chrome --new-window "https://www.instagram.com/accounts/emailsignup/"
-
-REM Open temporary email services in new tabs
-timeout /t 2 /nobreak >nul
-start chrome --new-tab "https://temp-mail.org/"
-timeout /t 2 /nobreak >nul
-start chrome --new-tab "https://10minutemail.com/"
-
-REM Run PowerShell script for account generation
-echo.
-echo Starting account generator...
-echo.
-powershell -ExecutionPolicy Bypass -File "C:\Users\Public\Desktop\Instagram_Account_Creator.ps1"
-'@
+          # Create the batch file using simple echo commands
+          $batchLines = @(
+            '@echo off',
+            'echo ============================================',
+            'echo INSTAGRAM ACCOUNT CREATION TOOL',
+            'echo ============================================',
+            'echo.',
+            'echo This tool will:',
+            'echo 1. Open Instagram signup page',
+            'echo 2. Open temporary email services',
+            'echo 3. Generate random account credentials',
+            'echo.',
+            'echo Press any key to start...',
+            'pause >nul',
+            '',
+            'REM Generate random number for username',
+            'set /a rand=%random%',
+            'set username=InstaUser%rand%',
+            '',
+            'REM Generate password',
+            'set password=Pass%rand%!@#',
+            '',
+            'REM Open Instagram signup page',
+            'start chrome --new-window "https://www.instagram.com/accounts/emailsignup/"',
+            '',
+            'REM Open temporary email services',
+            'timeout /t 2 /nobreak >nul',
+            'start chrome --new-tab "https://temp-mail.org/"',
+            'timeout /t 2 /nobreak >nul',
+            'start chrome --new-tab "https://10minutemail.com/"',
+            '',
+            'echo.',
+            'echo ============================================',
+            'echo GENERATED CREDENTIALS:',
+            'echo ============================================',
+            'echo Username: %username%',
+            'echo Password: %password%',
+            'echo Email: Use temporary email from opened tabs',
+            'echo.',
+            'echo STEPS TO CREATE ACCOUNT:',
+            'echo 1. Use username: %username%',
+            'echo 2. Use password: %password%',
+            'echo 3. Copy email from temp-mail.org',
+            'echo 4. Complete Instagram signup form',
+            'echo 5. Check temp email for verification code',
+            'echo 6. Enter verification code on Instagram',
+            'echo.',
+            'echo Press any key to exit...',
+            'pause >nul'
+          )
           
           # Save batch file
           $batchPath = "C:\Users\Public\Desktop\Instagram_Account_Creator.bat"
-          $batchContent | Out-File -FilePath $batchPath -Encoding ASCII
+          $batchLines -join "`r`n" | Out-File -FilePath $batchPath -Encoding ASCII
           
           # Create a simple text guide
-          $guideContent = @'
-INSTAGRAM ACCOUNT CREATION AUTOMATION GUIDE
-============================================
-
-QUICK START:
-1. Double-click "Instagram_Account_Creator.bat" on desktop
-2. Press any key when prompted
-3. Chrome will open with:
-   - Instagram signup page
-   - Temp email service 1
-   - Temp email service 2
-4. PowerShell window will show generated credentials
-
-GENERATED CREDENTIALS FORMAT:
-- Username: Random combination (e.g., CoolTiger1234)
-- Password: Strong 12-character password
-- Email: Random email address
-
-TEMPORARY EMAIL SERVICES:
-Use these for email verification:
-1. https://temp-mail.org/ (copy email from here)
-2. https://10minutemail.com/ (auto-refreshing)
-3. https://tempmail.email/ (simple interface)
-
-AUTOMATION TIPS:
-1. Use the generated credentials in Instagram form
-2. Copy temp email address for verification
-3. Check temp email for Instagram verification code
-4. Enter verification code on Instagram
-5. Account created successfully!
-
-NOTE: Instagram may require phone verification after multiple accounts.
-Use different IPs/VPNs for best results.
-'@
+          $guideLines = @(
+            'INSTAGRAM ACCOUNT CREATION AUTOMATION GUIDE',
+            '============================================',
+            '',
+            'QUICK START:',
+            '1. Double-click "Instagram_Account_Creator.bat" on desktop',
+            '2. Press any key when prompted',
+            '3. Chrome will open with:',
+            '   - Instagram signup page',
+            '   - Temp email service 1',
+            '   - Temp email service 2',
+            '',
+            'GENERATED CREDENTIALS:',
+            '- Random username (e.g., InstaUser12345)',
+            '- Strong password',
+            '- Use temporary email from opened tabs',
+            '',
+            'STEPS TO CREATE ACCOUNT:',
+            '1. On Instagram page, enter the generated username',
+            '2. Enter the generated password',
+            '3. Go to temp-mail.org and copy the email address',
+            '4. Paste email in Instagram form',
+            '5. Complete other details (name, birthday)',
+            '6. Check temp email for verification code',
+            '7. Enter code on Instagram',
+            '8. Account created!',
+            '',
+            'TIPS:',
+            '- Use different usernames each time',
+            '- Clear browser cookies between accounts',
+            '- Use VPN for multiple accounts',
+            '- Instagram may limit 3-5 accounts per day per IP'
+          )
           
           # Save guide
           $guidePath = "C:\Users\Public\Desktop\Instagram_Guide.txt"
-          $guideContent | Out-File -FilePath $guidePath -Encoding UTF8
+          $guideLines -join "`r`n" | Out-File -FilePath $guidePath -Encoding UTF8
           
           Write-Host "✓ Created Instagram automation tools on desktop:"
           Write-Host "  - Instagram_Account_Creator.bat (main tool)"
-          Write-Host "  - Instagram_Account_Creator.ps1 (PowerShell script)"
           Write-Host "  - Instagram_Guide.txt (instructions)"
 
       - name: Establish Tailscale Connection
@@ -350,17 +293,13 @@ Use different IPs/VPNs for best results.
           Write-Host "   - Automa_Instructions.txt"
           Write-Host ""
           Write-Host "2. INSTAGRAM ACCOUNT CREATOR:"
-          Write-Host "   - Instagram_Account_Creator.bat"
-          Write-Host "   - Instagram_Account_Creator.ps1"
+          Write-Host "   - Instagram_Account_Creator.bat (double-click this)"
           Write-Host "   - Instagram_Guide.txt"
           Write-Host ""
-          Write-Host "FEATURES:"
-          Write-Host "- Opens Instagram signup page automatically"
-          Write-Host "- Generates random usernames/passwords"
-          Write-Host "- Opens temp email services"
-          Write-Host "- Step-by-step guide"
-          Write-Host ""
-          Write-Host "USAGE: Double-click Instagram_Account_Creator.bat"
+          Write-Host "USAGE:"
+          Write-Host "- Double-click Instagram_Account_Creator.bat"
+          Write-Host "- It opens Chrome with all needed pages"
+          Write-Host "- Generates random credentials automatically"
           
           # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
