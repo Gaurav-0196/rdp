@@ -56,158 +56,93 @@ jobs:
               exit 1
           }
 
+      - name: Set Simple Wallpaper
+        run: |
+          Write-Host "Creating wallpaper tools..."
+          
+          # Create a simple batch file to change wallpaper
+          $batchLines = @(
+            '@echo off',
+            'echo WALLPAPER CHANGER',
+            'echo ==================',
+            'echo.',
+            'echo This opens wallpaper settings.',
+            'echo You can choose any wallpaper you like.',
+            'echo.',
+            'control /name Microsoft.Personalization /page pageWallpaper',
+            'echo.',
+            'echo Settings opened.',
+            'echo Choose your wallpaper and close when done.',
+            'pause'
+          )
+          
+          $batchPath = "C:\Users\Public\Desktop\Change_Wallpaper.bat"
+          $batchLines -join "`r`n" | Out-File -FilePath $batchPath -Encoding ASCII
+          
+          Write-Host "✓ Wallpaper changer created on desktop"
+
       - name: Install Tailscale
         run: |
           Write-Host "Installing Tailscale..."
           
           # Download Tailscale installer
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           
-          try {
-              Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath -TimeoutSec 60
-              Write-Host "Tailscale installer downloaded"
-          } catch {
-              Write-Host "Failed to download, trying alternative URL..."
-              $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-              Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath -TimeoutSec 60
-          }
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           
-          # Install Tailscale silently
-          Write-Host "Installing Tailscale (this may take a minute)..."
-          $installResult = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
+          # Install Tailscale
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           
-          if ($installResult.ExitCode -eq 0 -or $installResult.ExitCode -eq 3010) {
-              Write-Host "✓ Tailscale installed successfully (Exit code: $($installResult.ExitCode))"
-          } else {
-              Write-Host "⚠ Tailscale installation warning (Exit code: $($installResult.ExitCode)) - continuing anyway"
-          }
+          # Clean up
+          Remove-Item $installerPath -Force
+          Write-Host "✓ Tailscale installed"
           
-          # Clean up installer
-          Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-          
-          # Give Tailscale service time to start
-          Write-Host "Waiting for Tailscale service to start..."
-          Start-Sleep -Seconds 10
+          Start-Sleep -Seconds 5
 
       - name: Establish Tailscale Connection
         run: |
           Write-Host "Setting up Tailscale connection..."
           
-          # Check if Tailscale is installed
           $tailscalePath = "${env:ProgramFiles}\Tailscale\tailscale.exe"
-          if (-not (Test-Path $tailscalePath)) {
-              Write-Host "Tailscale not found at $tailscalePath"
-              Write-Host "Checking alternative location..."
-              $tailscalePath = "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe"
-          }
           
-          if (-not (Test-Path $tailscalePath)) {
-              Write-Error "Tailscale not installed. Exiting."
-              exit 1
-          }
-          
-          Write-Host "Tailscale found at: $tailscalePath"
-          
-          # Start Tailscale with authkey
-          Write-Host "Starting Tailscale connection..."
-          $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
-          
-          if ([string]::IsNullOrEmpty($authKey)) {
-              Write-Error "TAILSCALE_AUTH_KEY secret is not set. Please add it to GitHub Secrets."
-              exit 1
-          }
-          
-          Write-Host "Using Tailscale auth key (first 10 chars): $($authKey.Substring(0, [math]::Min(10, $authKey.Length)))..."
-          
-          # Run Tailscale up command
-          & $tailscalePath up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --accept-dns --reset
-          
-          # Check if command succeeded
-          if ($LASTEXITCODE -ne 0) {
-              Write-Host "Tailscale up command failed with exit code: $LASTEXITCODE"
-              Write-Host "Trying without reset flag..."
-              & $tailscalePath up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
-          }
-          
-          # Wait for Tailscale to assign an IP with timeout
-          Write-Host "Waiting for Tailscale IP assignment..."
-          $tsIP = $null
-          $maxRetries = 30  # 30 retries * 5 seconds = 150 seconds max wait
-          $retryCount = 0
-          
-          while (-not $tsIP -and $retryCount -lt $maxRetries) {
-              try {
-                  $tsIP = & $tailscalePath ip -4 2>$null
-                  if (-not $tsIP) {
-                      Write-Host "No IP yet... ($retryCount/$maxRetries)"
-                      Start-Sleep -Seconds 5
-                      $retryCount++
-                  }
-              } catch {
-                  Write-Host "Error checking IP: $_"
+          if (Test-Path $tailscalePath) {
+              $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
+              
+              if ($authKey -and $authKey -ne "") {
+                  & $tailscalePath up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
                   Start-Sleep -Seconds 5
-                  $retryCount++
-              }
-          }
-          
-          if (-not $tsIP) {
-              Write-Host "⚠ Tailscale IP not assigned after $maxRetries attempts."
-              Write-Host "Checking Tailscale status..."
-              & $tailscalePath status
-              
-              Write-Host "Trying to get any IP (v4 or v6)..."
-              $tsIP = & $tailscalePath ip 2>$null
-              
-              if (-not $tsIP) {
-                  Write-Host "⚠ Continuing without Tailscale IP - RDP may not be accessible"
-                  echo "TAILSCALE_IP=NOT_ASSIGNED" >> $env:GITHUB_ENV
+                  $tsIP = & $tailscalePath ip -4
+                  
+                  if ($tsIP) {
+                      echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+                      Write-Host "✓ Tailscale IP: $tsIP"
+                  } else {
+                      echo "TAILSCALE_IP=CONNECTING" >> $env:GITHUB_ENV
+                      Write-Host "Tailscale connecting..."
+                  }
               } else {
-                  echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-                  Write-Host "Tailscale IP (any): $tsIP"
+                  echo "TAILSCALE_IP=NO_KEY" >> $env:GITHUB_ENV
+                  Write-Host "⚠ No Tailscale auth key provided"
               }
           } else {
-              echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-              Write-Host "✓ Tailscale IPv4: $tsIP"
-          }
-          
-          # Display Tailscale status for debugging
-          Write-Host "Tailscale status:"
-          & $tailscalePath status
-
-      - name: Verify RDP Accessibility (Optional)
-        run: |
-          Write-Host "Checking RDP connectivity..."
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
-          if ($env:TAILSCALE_IP -eq "NOT_ASSIGNED") {
-              Write-Host "⚠ Skipping RDP connectivity test - Tailscale IP not assigned"
-              Write-Host "You may need to manually check Tailscale connection after RDP login"
-          } else {
-              # Test connectivity using Test-NetConnection
-              $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-              if ($testResult.TcpTestSucceeded) {
-                  Write-Host "✓ TCP connection to RDP port 3389 successful!"
-              } else {
-                  Write-Host "⚠ TCP connection to RDP port 3389 failed or timed out"
-                  Write-Host "This may be normal if Windows Firewall is blocking or Tailscale is still connecting"
-                  Write-Host "You can still try to connect via RDP"
-              }
+              echo "TAILSCALE_IP=NOT_INSTALLED" >> $env:GITHUB_ENV
+              Write-Host "⚠ Tailscale not installed"
           }
 
       - name: Install Automa Chrome Extension
         run: |
-          Write-Host "Creating Automa extension installation files..."
+          Write-Host "Creating Automa extension installer..."
           
-          # Create batch file
+          # Create simple batch file
           $batchLines = @(
             '@echo off',
-            'echo ============================================',
-            'echo AUTOMA CHROME EXTENSION INSTALLATION',
-            'echo ============================================',
+            'echo AUTOMA CHROME EXTENSION',
+            'echo =========================',
             'echo.',
             'echo 1. Open Chrome',
-            'echo 2. Visit: https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
+            'echo 2. Visit this link:',
+            'echo    https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca',
             'echo 3. Click "Add to Chrome"',
             'echo.',
             'pause'
@@ -222,42 +157,51 @@ jobs:
             'URL=https://chrome.google.com/webstore/detail/automa/infppggnoaenmfagbfknfkancpbljcca'
           )
           
-          $urlPath = "C:\Users\Public\Desktop\Install Automa.url"
+          $urlPath = "C:\Users\Public\Desktop\Automa_Extension.url"
           $urlLines -join "`r`n" | Out-File -FilePath $urlPath -Encoding ASCII
           
-          Write-Host "✓ Created Automa installation files on desktop"
+          Write-Host "✓ Automa installer created on desktop"
 
-      - name: Create Instagram Auto Account Creator
+      - name: Create Useful Shortcuts
         run: |
-          Write-Host "Creating Instagram automation tool..."
+          Write-Host "Creating desktop shortcuts..."
           
-          # Create batch file
-          $batchLines = @(
-            '@echo off',
-            'echo ============================================',
-            'echo INSTAGRAM ACCOUNT CREATION TOOL',
-            'echo ============================================',
-            'echo.',
-            'echo Opening Instagram signup and temp email services...',
-            'echo.',
-            'start chrome --new-window "https://www.instagram.com/accounts/emailsignup/"',
-            'timeout /t 3 /nobreak >nul',
-            'start chrome --new-tab "https://temp-mail.org/"',
-            'timeout /t 2 /nobreak >nul',
-            'start chrome --new-tab "https://10minutemail.com/"',
-            'echo.',
-            'echo Chrome windows opened with:',
-            'echo 1. Instagram signup',
-            'echo 2. Temp-mail.org',
-            'echo 3. 10MinuteMail',
-            'echo.',
-            'pause'
+          # Create Chrome shortcut if exists
+          $chromePaths = @(
+              "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+              "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
           )
           
-          $batchPath = "C:\Users\Public\Desktop\Instagram_Tool.bat"
-          $batchLines -join "`r`n" | Out-File -FilePath $batchPath -Encoding ASCII
+          foreach ($path in $chromePaths) {
+              if (Test-Path $path) {
+                  $shell = New-Object -ComObject WScript.Shell
+                  $shortcut = $shell.CreateShortcut("C:\Users\Public\Desktop\Chrome.lnk")
+                  $shortcut.TargetPath = $path
+                  $shortcut.Save()
+                  Write-Host "✓ Chrome shortcut created"
+                  break
+              }
+          }
           
-          Write-Host "✓ Created Instagram tool on desktop"
+          # Create basic shortcuts
+          $shell = New-Object -ComObject WScript.Shell
+          
+          # Notepad
+          $shortcut = $shell.CreateShortcut("C:\Users\Public\Desktop\Notepad.lnk")
+          $shortcut.TargetPath = "notepad.exe"
+          $shortcut.Save()
+          
+          # Command Prompt
+          $shortcut = $shell.CreateShortcut("C:\Users\Public\Desktop\CMD.lnk")
+          $shortcut.TargetPath = "cmd.exe"
+          $shortcut.Save()
+          
+          # File Explorer
+          $shortcut = $shell.CreateShortcut("C:\Users\Public\Desktop\File Explorer.lnk")
+          $shortcut.TargetPath = "explorer.exe"
+          $shortcut.Save()
+          
+          Write-Host "✓ Desktop shortcuts created"
 
       - name: Maintain Connection
         run: |
@@ -265,23 +209,15 @@ jobs:
           Write-Host "Username: MICKEY"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           
-          if ($env:TAILSCALE_IP -ne "NOT_ASSIGNED") {
+          if ($env:TAILSCALE_IP -and $env:TAILSCALE_IP -notin @("NO_KEY", "NOT_INSTALLED", "CONNECTING")) {
               Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-              Write-Host "Connect via: Remote Desktop -> $env:TAILSCALE_IP"
+              Write-Host "Connect to: $env:TAILSCALE_IP"
           } else {
-              Write-Host "⚠ Tailscale IP: NOT ASSIGNED"
-              Write-Host "After RDP login, check Tailscale icon in system tray"
-              Write-Host "or run: tailscale status in Command Prompt"
+              Write-Host "Tailscale Status: $env:TAILSCALE_IP"
           }
           
           Write-Host "===============================`n"
-          
-          Write-Host "DESKTO TOOLS:"
-          Write-Host "1. Install_Automa.bat - Chrome extension"
-          Write-Host "2. Instagram_Tool.bat - Account creator"
-          Write-Host ""
-          Write-Host "RDP session active. Cancel workflow when done."
-          
+
           # Keep active
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active"
