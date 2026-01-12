@@ -31,9 +31,8 @@ jobs:
 
       - name: Create RDP User with Fixed Password
         run: |
-          # Temporarily disable password complexity policy
-          $secpolTemplate = @"
-[Unicode]
+          # Temporarily disable password complexity policy using a simpler method
+          $secpolContent = '[Unicode]
 Unicode=yes
 [System Access]
 MinimumPasswordAge = 0
@@ -47,16 +46,14 @@ ForceLogoffWhenHourExpire = 0
 [Registry Values]
 [Privilege Rights]
 [Version]
-signature="`$CHICAGO`$"
-Revision=1
-"@
+signature="$CHICAGO$"
+Revision=1'
           
           $tempFile = "$env:TEMP\secpol.inf"
-          $secpolTemplate | Out-File -FilePath $tempFile -Encoding ascii
+          $secpolContent | Out-File -FilePath $tempFile -Encoding ascii
           
           # Apply the security policy
           secedit /configure /db "$env:TEMP\secedit.sdb" /cfg $tempFile /areas SECURITYPOLICY
-          Remove-Item $tempFile -Force
           
           # Now create the user with your desired password
           $password = "Mickey@123"
@@ -65,9 +62,9 @@ Revision=1
           # Try to create the user
           try {
               New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
-              Write-Host "User created successfully"
+              Write-Host "User created successfully using PowerShell"
           } catch {
-              Write-Host "Error creating user: $_"
+              Write-Host "PowerShell method failed, trying NET USER command..."
               # Alternative method using NET USER command
               net user MICKEY $password /add /y /expires:never
               net localgroup administrators MICKEY /add
@@ -83,6 +80,9 @@ Revision=1
               Write-Error "User creation failed completely"
               exit 1
           }
+          
+          # Clean up
+          Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
 
       - name: Install Tailscale
         run: |
