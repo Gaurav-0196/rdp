@@ -31,16 +31,56 @@ jobs:
 
       - name: Create RDP User with Fixed Password
         run: |
-          $password = "Mickey@123!"
+          # Temporarily disable password complexity policy
+          $secpolTemplate = @"
+[Unicode]
+Unicode=yes
+[System Access]
+MinimumPasswordAge = 0
+MaximumPasswordAge = 42
+MinimumPasswordLength = 1
+PasswordComplexity = 0
+PasswordHistorySize = 0
+LockoutBadCount = 0
+RequireLogonToChangePassword = 0
+ForceLogoffWhenHourExpire = 0
+[Registry Values]
+[Privilege Rights]
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+"@
+          
+          $tempFile = "$env:TEMP\secpol.inf"
+          $secpolTemplate | Out-File -FilePath $tempFile -Encoding ascii
+          
+          # Apply the security policy
+          secedit /configure /db "$env:TEMP\secedit.sdb" /cfg $tempFile /areas SECURITYPOLICY
+          Remove-Item $tempFile -Force
+          
+          # Now create the user with your desired password
+          $password = "Mickey@123"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "MICKEY"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY"
           
-          echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
+          # Try to create the user
+          try {
+              New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
+              Write-Host "User created successfully"
+          } catch {
+              Write-Host "Error creating user: $_"
+              # Alternative method using NET USER command
+              net user MICKEY $password /add /y /expires:never
+              net localgroup administrators MICKEY /add
+              net localgroup "Remote Desktop Users" MICKEY /add
+          }
           
-          if (-not (Get-LocalUser -Name "MICKEY")) {
-              Write-Error "User creation failed"
+          # Verify user was created
+          $user = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
+          if ($user) {
+              echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
+              Write-Host "User verification successful"
+          } else {
+              Write-Error "User creation failed completely"
               exit 1
           }
 
