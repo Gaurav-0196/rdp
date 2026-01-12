@@ -33,48 +33,26 @@ jobs:
         run: |
           Write-Host "Creating RDP user..."
           
-          # Method 1: Try with a strong password first
-          $password = "Mickey@Secure123!"
+          # FIRST, disable password complexity using a simple command
+          net accounts /MINPWLEN:1
           
-          try {
-              $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-              New-LocalUser -Name "MICKEY" -Password $securePass -AccountNeverExpires -ErrorAction Stop
-              Write-Host "✓ User created with PowerShell"
-              
-              Add-LocalGroupMember -Group "Administrators" -Member "MICKEY" -ErrorAction Stop
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MICKEY" -ErrorAction Stop
-              
-          } catch {
-              Write-Host "Method 1 failed, trying NET USER..."
-              
-              # Method 2: Use NET USER command
-              net user MICKEY $password /add /y /expires:never
-              net localgroup administrators MICKEY /add
-              net localgroup "Remote Desktop Users" MICKEY /add
-          }
+          # Use a password that definitely meets requirements
+          $password = "P@ssw0rd123!"
           
-          # Check if user was created
-          $user = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
-          if (-not $user) {
-              Write-Host "Trying with different password..."
-              
-              # Method 3: Try with the original password using a different approach
-              $password = "Mickey@123"
-              $command = "net user MICKEY `"$password`" /add /y /expires:never"
-              Invoke-Expression $command
-              net localgroup administrators MICKEY /add
-              net localgroup "Remote Desktop Users" MICKEY /add
-          }
+          # Create user using cmd.exe to avoid PowerShell restrictions
+          cmd.exe /c "net user MICKEY $password /add /Y /expires:never"
+          cmd.exe /c "net localgroup administrators MICKEY /add"
+          cmd.exe /c "net localgroup `"Remote Desktop Users`" MICKEY /add"
           
-          # Final verification
-          $finalUser = Get-LocalUser -Name "MICKEY" -ErrorAction SilentlyContinue
-          if ($finalUser) {
+          # Verify the user was created
+          $userCheck = cmd.exe /c "net user MICKEY"
+          if ($userCheck -like "*User name*MICKEY*") {
               echo "RDP_CREDS=User: MICKEY | Password: $password" >> $env:GITHUB_ENV
-              Write-Host "✓ User created successfully"
+              Write-Host "✓ User created successfully!"
               Write-Host "Username: MICKEY"
               Write-Host "Password: $password"
           } else {
-              Write-Error "❌ User creation failed"
+              Write-Error "User creation failed"
               exit 1
           }
 
